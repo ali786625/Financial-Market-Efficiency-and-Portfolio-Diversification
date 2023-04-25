@@ -1,0 +1,315 @@
+---
+title: "CAPM"
+author: "Ali"
+date: "2023-04-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+	message = FALSE,
+	warning = FALSE,
+	show_col_types = FALSE)
+
+pacman::p_load(
+  fixest,
+  modelsummary,
+  margins,
+  wooldridge,
+  AER,
+  janitor,
+  kableExtra,
+  tidyverse,
+  haven,
+  patchwork,
+  hdm,
+  randomForest,
+  ranger,
+  glmnet,
+  matrixStats,
+  scales, 
+  forcats,
+  patchwork,
+  lmtest, 
+  insight,
+  stargazer
+)
+
+# Set the graphical theme
+ggplot2::theme_set(ggplot2::theme_light())
+```
+
+```{r}
+#Add_return function
+ Add_return <- function (.data){
+   .data <- .data %>%
+     mutate(
+       Adj_close_lagged = lag (Adj_close),
+       returns =  Adj_close/Adj_close_lagged
+       )
+ }
+```
+
+```{r}
+csv_files_BD <- list.files(path = "C:/Users/AHM/OneDrive/York MA/5520 Econ of Financial Markets/Term Project/Data", pattern = "^B.*D.csv$")
+
+csv_files_SD <- list.files(path = "C:/Users/AHM/OneDrive/York MA/5520 Econ of Financial Markets/Term Project/Data", pattern = "^S.*D.csv$")
+
+csv_files_BM <- list.files(path = "C:/Users/AHM/OneDrive/York MA/5520 Econ of Financial Markets/Term Project/Data", pattern = "^B.*M.csv$")
+
+csv_files_SM <- list.files(path = "C:/Users/AHM/OneDrive/York MA/5520 Econ of Financial Markets/Term Project/Data", pattern = "^S.*M.csv$")
+
+
+results <- data.frame("Type" = c("J1", "F_cric", "CAPM"), "Large Daily"= rep(NA, 3), "Large Monthly"= rep(NA, 3), "Small Daily"= rep(NA, 3), "Small Monthly"= rep(NA, 3))
+
+```
+
+```{r}
+#SPY - Market Portfolio
+SPY_D <- read.csv("C:/Users/AHM/OneDrive/York MA/5520 Econ of Financial Markets/Term Project/Data/M_SPY_D.csv")
+
+SPY_M <- read.csv("C:/Users/AHM/OneDrive/York MA/5520 Econ of Financial Markets/Term Project/Data/M_SPY_M.csv")
+
+rf_D <- (0.015/365)
+
+rf_M <- (0.015/12)
+
+colnames(SPY_D)[6] = "Adj_close"
+colnames(SPY_M)[6] = "Adj_close"
+
+SPY_D <- Add_return(SPY_D)
+SPY_M <- Add_return(SPY_M)
+
+SPY_D <- SPY_D %>% 
+  select(., returns) %>% 
+  mutate("excess_returns" = (returns - 1) - rf_D) %>% 
+  na.omit(.)
+
+SPY_M <- SPY_M %>% 
+  select(., returns) %>% 
+  mutate("excess_returns" = (returns - 1) - rf_M) %>% 
+  na.omit(.)
+```
+
+
+```{r}
+######################################Large Stocks at Daily
+
+df <- data.frame()
+
+df_r <- data.frame(x = rep(NA, 2517))
+
+n = 1
+
+for (file in csv_files_BD) {
+  file_data <- read.csv(file.path("C:/Users/AHM/OneDrive/York MA/5520 Econ of Financial Markets/Term Project/Data", file))
+  colnames(file_data)[6] = "Adj_close"
+  file_data <- Add_return(file_data)
+  file_data <- select(file_data, returns)
+  file_data <- na.omit(file_data)
+  file_data["exc_returns"] <- (file_data$returns - 1) - rf_D
+  file_data["mkt_exc_return"] <- SPY_D$excess_returns
+  reg1 <- lm(exc_returns ~ mkt_exc_return, data=file_data)
+  df[n,1] <- coef(reg1)[1]
+  df_r<- cbind(df_r, resid(reg1))
+  n = n + 1
+}
+colnames(df)[1] <- "alphas"
+
+mu_m = (mean(SPY_D$excess_returns))^2
+var_m = var(SPY_D$excess_returns)
+
+df_r <- df_r[,-1]
+
+mat_e <- as.matrix(df_r)
+
+alp <- as.matrix(df$alphas)
+alp_t <- t(as.matrix(df$alphas))
+sigma <- cov(mat_e)
+sigma_inv <- solve(sigma)
+
+p2 <- alp_t %*% sigma_inv %*% alp
+
+To <- nrow(file_data)
+N <- ncol(df_r)
+
+J_0 <-  To*((1+mu_m/var_m)^-1)*p2
+
+J_1 <- J_0 * (To-N-1) * (1/(To*N))
+
+F_cric <- qf(0.95, N, To-N-1)
+results[2,2] <- F_cric
+
+results[1,2] <- J_1[1,1]
+
+#CAPM
+results[3,2] <- ifelse(J_1[1,1]>F_cric, "Rejected", "Not Rejected")
+```
+
+```{r}
+################################Large Stocks at Monthly
+
+df <- data.frame()
+
+df_r <- data.frame(x = rep(NA, 119))
+
+n = 1
+
+for (file in csv_files_BM) {
+  file_data <- read.csv(file.path("C:/Users/AHM/OneDrive/York MA/5520 Econ of Financial Markets/Term Project/Data", file))
+  colnames(file_data)[6] = "Adj_close"
+  file_data <- Add_return(file_data)
+  file_data <- select(file_data, returns)
+  file_data <- na.omit(file_data)
+  file_data["exc_returns"] <- (file_data$returns - 1) - rf_M
+  file_data["mkt_exc_return"] <- SPY_M$excess_returns
+  reg1 <- lm(exc_returns ~ mkt_exc_return, data=file_data)
+  df[n,1] <- coef(reg1)[1]
+  df_r<- cbind(df_r, resid(reg1))
+  n = n + 1
+}
+colnames(df)[1] <- "alphas"
+
+mu_m = (mean(SPY_M$excess_returns))^2
+var_m = var(SPY_M$excess_returns)
+
+df_r <- df_r[,-1]
+
+mat_e <- as.matrix(df_r)
+
+alp <- as.matrix(df$alphas)
+alp_t <- t(as.matrix(df$alphas))
+sigma <- cov(mat_e)
+sigma_inv <- solve(sigma)
+
+p2 <- alp_t %*% sigma_inv %*% alp
+
+To <- nrow(file_data)
+N <- ncol(df_r)
+
+J_0 <-  To*((1+mu_m/var_m)^-1)*p2
+
+J_1 <- J_0 * (To-N-1) * (1/(To*N))
+
+F_cric <- qf(0.95, N, To-N-1)
+results[2,3] <- F_cric
+
+results[1,3] <- J_1[1,1]
+
+#CAPM
+results[3,3] <- ifelse(J_1[1,1]>F_cric, "Rejected", "Not Rejected")
+```
+
+```{r}
+################################Small Stocks at Daily
+df <- data.frame()
+
+df_r <- data.frame(x = rep(NA, 2517))
+
+n = 1
+
+for (file in csv_files_SD) {
+  file_data <- read.csv(file.path("C:/Users/AHM/OneDrive/York MA/5520 Econ of Financial Markets/Term Project/Data", file))
+  colnames(file_data)[6] = "Adj_close"
+  file_data <- Add_return(file_data)
+  file_data <- select(file_data, returns)
+  file_data <- na.omit(file_data)
+  file_data["exc_returns"] <- (file_data$returns - 1) - rf_D
+  file_data["mkt_exc_return"] <- SPY_D$excess_returns
+  reg1 <- lm(exc_returns ~ mkt_exc_return, data=file_data)
+  df[n,1] <- coef(reg1)[1]
+  df_r<- cbind(df_r, resid(reg1))
+  n = n + 1
+}
+colnames(df)[1] <- "alphas"
+
+mu_m = (mean(SPY_D$excess_returns))^2
+var_m = var(SPY_D$excess_returns)
+
+df_r <- df_r[,-1]
+
+mat_e <- as.matrix(df_r)
+
+alp <- as.matrix(df$alphas)
+alp_t <- t(as.matrix(df$alphas))
+sigma <- cov(mat_e)
+sigma_inv <- solve(sigma)
+
+p2 <- alp_t %*% sigma_inv %*% alp
+
+To <- nrow(file_data)
+N <- ncol(df_r)
+
+J_0 <-  To*((1+mu_m/var_m)^-1)*p2
+
+J_1 <- J_0 * (To-N-1) * (1/(To*N))
+
+F_cric <- qf(0.95, N, To-N-1)
+results[2,4] <- F_cric
+
+results[1,4] <- J_1[1,1]
+
+#CAPM
+results[3,4] <- ifelse(J_1[1,1]>F_cric, "Rejected", "Not Rejected")
+```
+
+```{r}
+################################Small Stocks at Monthly
+df <- data.frame()
+
+df_r <- data.frame(x = rep(NA, 119))
+
+n = 1
+
+for (file in csv_files_SM) {
+  file_data <- read.csv(file.path("C:/Users/AHM/OneDrive/York MA/5520 Econ of Financial Markets/Term Project/Data", file))
+  colnames(file_data)[6] = "Adj_close"
+  file_data <- Add_return(file_data)
+  file_data <- select(file_data, returns)
+  file_data <- na.omit(file_data)
+  file_data["exc_returns"] <- (file_data$returns - 1) - rf_M
+  file_data["mkt_exc_return"] <- SPY_M$excess_returns
+  reg1 <- lm(exc_returns ~ mkt_exc_return, data=file_data)
+  df[n,1] <- coef(reg1)[1]
+  df_r<- cbind(df_r, resid(reg1))
+  n = n + 1
+}
+colnames(df)[1] <- "alphas"
+
+mu_m = (mean(SPY_M$excess_returns))^2
+var_m = var(SPY_M$excess_returns)
+
+df_r <- df_r[,-1]
+
+mat_e <- as.matrix(df_r)
+
+alp <- as.matrix(df$alphas)
+alp_t <- t(as.matrix(df$alphas))
+sigma <- cov(mat_e)
+sigma_inv <- solve(sigma)
+
+p2 <- alp_t %*% sigma_inv %*% alp
+
+To <- nrow(file_data)
+N <- ncol(df_r)
+
+J_0 <-  To*((1+mu_m/var_m)^-1)*p2
+
+J_1 <- J_0 * (To-N-1) * (1/(To*N))
+
+F_cric <- qf(0.95, N, To-N-1)
+results[2,5] <- F_cric
+
+results[1,5] <- J_1[1,1]
+
+#CAPM
+results[3,5] <- ifelse(J_1[1,1]>F_cric, "Rejected", "Not Rejected")
+```
+
+```{r}
+knitr::kable(results,
+             escape = F,
+             longtable = T)  %>%
+  kable_classic_2()
+
+```
